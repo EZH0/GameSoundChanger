@@ -1,0 +1,9 @@
+## Interface: 120005
+## Title: GameSoundChanger
+## Notes: Replace selected player spell sounds with custom addon audio.
+## Author: Codex
+## Version: 0.1.0
+## OptionalDeps: LibSharedMedia-3.0, SharedMedia, SharedMedia_Causese, ElvUI, ElvUI_WindTools, Details, DBM-Core
+## SavedVariables: GameSoundChangerDB
+
+GameSoundChanger.lua
