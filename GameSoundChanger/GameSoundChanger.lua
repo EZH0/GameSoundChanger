@@ -297,6 +297,10 @@ local function ActivateProfile(name)
 	Print(L("profileSwitched", name))
 end
 
+local function IsEditorVisible()
+	return ui and ui:IsShown()
+end
+
 local function Contains(list, value)
 	for _, item in ipairs(list) do
 		if item == value then
@@ -2076,7 +2080,7 @@ local function HandleSpellEvent(event, unit, castGUID, spellID)
 		return
 	end
 
-	spellID = tonumber(spellID)
+	spellID = SafeNumber(spellID)
 	if not spellID then
 		return
 	end
@@ -2087,13 +2091,14 @@ local function HandleSpellEvent(event, unit, castGUID, spellID)
 	lastSpell.name = name
 	lastSpell.trigger = trigger
 
-	if ui then
+	if IsEditorVisible() then
 		RefreshUI()
 	end
 	RefreshSettingsPanel()
 
-	local rule = DB().rules[RuleKey("SPELL", spellID)]
-	if DB().enabled and rule and TriggerMatches(rule.trigger, trigger) then
+	local db = DB()
+	local rule = db.rules[RuleKey("SPELL", spellID)]
+	if db.enabled and rule and TriggerMatches(rule.trigger, trigger) then
 		PlaySelectedSound(rule.sound)
 	end
 end
@@ -2116,18 +2121,19 @@ local function HandlePlayerAura(spellID, spellName, trigger, processed)
 	lastAura.name = spellName or GetSpellName(spellID)
 	lastAura.trigger = trigger
 
-	if ui then
+	if IsEditorVisible() then
 		RefreshUI()
 	end
 	RefreshSettingsPanel()
 
-	local rule = DB().rules[key]
-	if DB().enabled and rule and TriggerMatches(rule.trigger, trigger) then
+	local db = DB()
+	local rule = db.rules[key]
+	if db.enabled and rule and TriggerMatches(rule.trigger, trigger) then
 		PlaySelectedSound(rule.sound)
 	end
 end
 
-local function ScanPlayerAuras(processed)
+local function ScanPlayerAuras(processed, handledSpellIDs)
 	local active = {}
 
 	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
@@ -2137,9 +2143,12 @@ local function ScanPlayerAuras(processed)
 				break
 			end
 
-					local spellID = SafeNumber(aura.spellId)
+			local spellID = SafeNumber(aura.spellId)
 			if spellID then
 				active[spellID] = true
+				if handledSpellIDs then
+					handledSpellIDs[spellID] = true
+				end
 				if not auraStates[spellID] then
 					HandlePlayerAura(spellID, aura.name, "APPLIED", processed)
 				end
@@ -2154,6 +2163,9 @@ local function ScanPlayerAuras(processed)
 			spellID = SafeNumber(spellID)
 			if spellID then
 				active[spellID] = true
+				if handledSpellIDs then
+					handledSpellIDs[spellID] = true
+				end
 				if not auraStates[spellID] then
 					HandlePlayerAura(spellID, name, "APPLIED", processed)
 				end
@@ -2164,17 +2176,74 @@ local function ScanPlayerAuras(processed)
 	auraStates = active
 end
 
+local function GetTrackedAuraRuleIDs(db)
+	local tracked = {}
+	local hasTracked = false
+	for key, rule in pairs(db.rules or {}) do
+		if rule and rule.type == "AURA" then
+			local spellID = SafeNumber(rule.id or key:match("AURA:(%d+)"))
+			if spellID then
+				tracked[spellID] = rule
+				hasTracked = true
+			end
+		end
+	end
+	return tracked, hasTracked
+end
+
+local function CheckTrackedPlayerAuras(db, processed, handledSpellIDs, tracked, hasTracked)
+	if not tracked then
+		tracked, hasTracked = GetTrackedAuraRuleIDs(db)
+	end
+	if not hasTracked then
+		return
+	end
+
+	local active = {}
+	for spellID, rule in pairs(tracked) do
+		if handledSpellIDs and handledSpellIDs[spellID] then
+			active[spellID] = true
+		else
+			local aura
+			if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+				local ok, auraData = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+				if ok then
+					aura = auraData
+				end
+			end
+
+			local isActive = aura ~= nil
+			active[spellID] = isActive
+			if isActive and not auraStates[spellID] then
+				HandlePlayerAura(spellID, aura.name or rule.name, "APPLIED", processed)
+			end
+		end
+	end
+
+	for spellID in pairs(tracked) do
+		auraStates[spellID] = active[spellID] or false
+	end
+end
+
 local function HandleUnitAura(unit, updateInfo)
 	if unit ~= "player" then
 		return
 	end
 
+	local db = DB()
+	local editorVisible = IsEditorVisible()
+	local tracked, hasTracked = GetTrackedAuraRuleIDs(db)
 	local processed = {}
+	local handledSpellIDs = {}
 	if type(updateInfo) == "table" then
 		if type(updateInfo.addedAuras) == "table" then
 			for _, aura in ipairs(updateInfo.addedAuras) do
 				if aura and aura.isHelpful ~= false then
-					HandlePlayerAura(aura.spellId, aura.name, "APPLIED", processed)
+					local spellID = SafeNumber(aura.spellId)
+					if spellID and (editorVisible or tracked[spellID]) then
+						handledSpellIDs[spellID] = true
+						HandlePlayerAura(spellID, aura.name, "APPLIED", processed)
+					end
 				end
 			end
 		end
@@ -2183,13 +2252,21 @@ local function HandleUnitAura(unit, updateInfo)
 			for _, auraInstanceID in ipairs(updateInfo.updatedAuraInstanceIDs) do
 				local ok, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", auraInstanceID)
 				if ok and aura and aura.isHelpful ~= false then
-					HandlePlayerAura(aura.spellId, aura.name, "REFRESH", processed)
+					local spellID = SafeNumber(aura.spellId)
+					if spellID and (editorVisible or tracked[spellID]) then
+						handledSpellIDs[spellID] = true
+						HandlePlayerAura(spellID, aura.name, "REFRESH", processed)
+					end
 				end
 			end
 		end
 	end
 
-	ScanPlayerAuras(processed)
+	if editorVisible then
+		ScanPlayerAuras(processed, handledSpellIDs)
+	else
+		CheckTrackedPlayerAuras(db, processed, handledSpellIDs, tracked, hasTracked)
+	end
 end
 
 addon:SetScript("OnEvent", function(self, event, ...)
