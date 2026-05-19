@@ -7,6 +7,7 @@ local PREFIX = "|cff66ccffGameSoundChanger:|r "
 local BASE_SOUND_PATH = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Sounds\\"
 local ROWS_PER_PAGE = 8
 local SOUND_ROWS_PER_PAGE = 10
+local PROFILE_EXPORT_VERSION = "GSC1"
 
 local CHANNELS = { "Master", "SFX", "Ambience", "Dialog", "Music" }
 local RULE_TYPES = { "SPELL", "AURA" }
@@ -21,9 +22,12 @@ local EVENT_TO_TRIGGER = {
 local defaults = {
 	enabled = true,
 	channel = "Master",
+	locale = "en",
+	activeProfile = "Default",
 	rules = {},
 	mappings = {},
 	mutedSoundFileIDs = {},
+	profiles = {},
 }
 
 local addon = CreateFrame("Frame")
@@ -37,6 +41,103 @@ local lastAura = {}
 local failedSoundAt = {}
 local mediaSoundChoices
 local migratedLegacyMappings
+local auraStates = {}
+local ApplyMutedSoundFiles
+
+local localeText = {
+	en = {
+		addUpdate = "Add/Update",
+		alertListHint = "Alert list sounds come from LibSharedMedia. Custom files still go in Interface\\AddOns\\GameSoundChanger\\Sounds.",
+		buff = "Buff",
+		channel = "Channel: %s",
+		close = "Close",
+		copied = "Profile string copied to clipboard.",
+		copyFallback = "Clipboard copy was blocked. Press Ctrl+C in the export box.",
+		customFile = "Source: Custom file",
+		disabled = "Disabled.",
+		enabled = "Enabled",
+		enabledMessage = "Enabled.",
+		export = "Export Profile",
+		exportTitle = "Export Profile",
+		import = "Import Profile",
+		importName = "Profile name",
+		importString = "Profile string",
+		importTitle = "Import Profile",
+		language = "Language: English",
+		lastBuff = "Last buff: %s",
+		lastBuffNone = "Last buff: none yet",
+		lastSpell = "Last spell: %s",
+		lastSpellNone = "Last spell: none yet",
+		noImportName = "Enter a profile name.",
+		noImportString = "Enter a profile string.",
+		noSound = "Choose an alert sound or custom sound file.",
+		page = "Page %d / %d",
+		profile = "Profile: %s",
+		profileImported = "Imported profile: %s.",
+		profileSwitched = "Switched to profile: %s.",
+		rules = "Rules",
+		settingsChannel = "Sound channel: %s",
+		settingsCount = "Saved rules: %d",
+		settingsDescription = "Choose player spells or player buff activations, then play named alert sounds from LibSharedMedia or custom audio.",
+		settingsEnable = "Enable custom sounds",
+		settingsOpen = "Open Sound Editor",
+		settingsTip = "Tip: cast a spell or gain a buff, open the sound editor, press Use Last, then choose an alert sound.",
+		soundEditor = "GameSoundChanger",
+		soundSource = "Source: Alert list",
+		spell = "Spell",
+		spellOrBuffID = "%s ID",
+		track = "Track: %s",
+		trigger = "Trigger: %s",
+		useLast = "Use Last",
+		preview = "Preview",
+	},
+	ko = {
+		addUpdate = "추가/갱신",
+		alertListHint = "알림 사운드는 LibSharedMedia에서 가져옵니다. 커스텀 파일은 Interface\\AddOns\\GameSoundChanger\\Sounds에 넣어주세요.",
+		buff = "버프",
+		channel = "채널: %s",
+		close = "닫기",
+		copied = "프로파일 문자열을 클립보드에 복사했습니다.",
+		copyFallback = "클립보드 복사가 차단되었습니다. 내보내기 칸에서 Ctrl+C를 눌러주세요.",
+		customFile = "소스: 커스텀 파일",
+		disabled = "비활성화했습니다.",
+		enabled = "활성화",
+		enabledMessage = "활성화했습니다.",
+		export = "프로파일 내보내기",
+		exportTitle = "프로파일 내보내기",
+		import = "프로파일 가져오기",
+		importName = "프로파일 이름",
+		importString = "프로파일 문자열",
+		importTitle = "프로파일 가져오기",
+		language = "언어: 한국어",
+		lastBuff = "마지막 버프: %s",
+		lastBuffNone = "마지막 버프: 없음",
+		lastSpell = "마지막 주문: %s",
+		lastSpellNone = "마지막 주문: 없음",
+		noImportName = "프로파일 이름을 입력하세요.",
+		noImportString = "프로파일 문자열을 입력하세요.",
+		noSound = "알림 사운드 또는 커스텀 사운드 파일을 선택하세요.",
+		page = "페이지 %d / %d",
+		profile = "프로파일: %s",
+		profileImported = "프로파일을 가져왔습니다: %s.",
+		profileSwitched = "프로파일을 전환했습니다: %s.",
+		rules = "규칙",
+		settingsChannel = "사운드 채널: %s",
+		settingsCount = "저장된 규칙: %d",
+		settingsDescription = "플레이어 주문 또는 플레이어 버프 발동을 선택한 뒤 LibSharedMedia 알림음이나 커스텀 사운드를 재생합니다.",
+		settingsEnable = "커스텀 사운드 활성화",
+		settingsOpen = "사운드 편집기 열기",
+		settingsTip = "팁: 주문을 사용하거나 버프를 얻은 뒤 사운드 편집기에서 Use Last를 누르고 알림음을 선택하세요.",
+		soundEditor = "GameSoundChanger",
+		soundSource = "소스: 알림 목록",
+		spell = "주문",
+		spellOrBuffID = "%s ID",
+		track = "추적: %s",
+		trigger = "발동: %s",
+		useLast = "최근 항목",
+		preview = "미리듣기",
+	},
+}
 
 local function Print(message)
 	if DEFAULT_CHAT_FRAME then
@@ -49,6 +150,24 @@ end
 local function Trim(value)
 	value = value or ""
 	return value:match("^%s*(.-)%s*$")
+end
+
+local function SafeNumber(value)
+	local ok, numberValue = pcall(tonumber, value)
+	if ok then
+		return numberValue
+	end
+	return nil
+end
+
+local function L(key, ...)
+	local db = GameSoundChangerDB
+	local locale = db and db.locale or "en"
+	local text = (localeText[locale] and localeText[locale][key]) or localeText.en[key] or key
+	if select("#", ...) > 0 then
+		return string.format(text, ...)
+	end
+	return text
 end
 
 local function CopyDefaults(source, target)
@@ -64,12 +183,118 @@ local function CopyDefaults(source, target)
 	end
 end
 
+local function CopyTable(source)
+	local target = {}
+	if type(source) ~= "table" then
+		return target
+	end
+
+	for key, value in pairs(source) do
+		if type(value) == "table" then
+			target[key] = CopyTable(value)
+		else
+			target[key] = value
+		end
+	end
+	return target
+end
+
+local function NormalizeProfileName(name)
+	name = Trim(name)
+	if name == "" then
+		return "Default"
+	end
+	return name
+end
+
+local function MakeProfileFromDB(db)
+	return {
+		enabled = db.enabled ~= false,
+		channel = db.channel or "Master",
+		locale = db.locale or "en",
+		rules = CopyTable(db.rules),
+		mutedSoundFileIDs = CopyTable(db.mutedSoundFileIDs),
+	}
+end
+
+local function BindActiveProfile(db)
+	db.activeProfile = NormalizeProfileName(db.activeProfile)
+	if type(db.profiles) ~= "table" then
+		db.profiles = {}
+	end
+	if type(db.profiles[db.activeProfile]) ~= "table" then
+		db.profiles[db.activeProfile] = MakeProfileFromDB(db)
+	end
+
+	local profile = db.profiles[db.activeProfile]
+	if type(profile.rules) ~= "table" then
+		profile.rules = {}
+	end
+	if type(profile.mutedSoundFileIDs) ~= "table" then
+		profile.mutedSoundFileIDs = {}
+	end
+
+	profile.enabled = profile.enabled ~= false
+	profile.channel = profile.channel or "Master"
+	profile.locale = profile.locale or db.locale or "en"
+
+	db.enabled = profile.enabled
+	db.channel = profile.channel
+	db.locale = profile.locale
+	db.rules = profile.rules
+	db.mutedSoundFileIDs = profile.mutedSoundFileIDs
+end
+
 local function DB()
 	if type(GameSoundChangerDB) ~= "table" then
 		GameSoundChangerDB = {}
 	end
 	CopyDefaults(defaults, GameSoundChangerDB)
+	BindActiveProfile(GameSoundChangerDB)
 	return GameSoundChangerDB
+end
+
+local function SaveCurrentProfile()
+	local db = DB()
+	local profileName = NormalizeProfileName(db.activeProfile)
+	if type(db.profiles[profileName]) ~= "table" then
+		db.profiles[profileName] = {}
+	end
+
+	local profile = db.profiles[profileName]
+	profile.enabled = db.enabled ~= false
+	profile.channel = db.channel or "Master"
+	profile.locale = db.locale or "en"
+	profile.rules = db.rules or {}
+	profile.mutedSoundFileIDs = db.mutedSoundFileIDs or {}
+end
+
+local function GetProfileNames()
+	local names = {}
+	for name in pairs(DB().profiles or {}) do
+		names[#names + 1] = name
+	end
+	table.sort(names)
+	return names
+end
+
+local function ActivateProfile(name)
+	local db = DB()
+	name = NormalizeProfileName(name)
+	if type(db.profiles[name]) ~= "table" then
+		db.profiles[name] = {
+			enabled = true,
+			channel = "Master",
+			locale = db.locale or "en",
+			rules = {},
+			mutedSoundFileIDs = {},
+		}
+	end
+	db.activeProfile = name
+	BindActiveProfile(db)
+	ApplyMutedSoundFiles()
+	auraStates = {}
+	Print(L("profileSwitched", name))
 end
 
 local function Contains(list, value)
@@ -109,7 +334,7 @@ local function NormalizePath(path)
 end
 
 local function GetSpellName(spellID)
-	spellID = tonumber(spellID)
+	spellID = SafeNumber(spellID)
 	if not spellID then
 		return nil
 	end
@@ -153,9 +378,9 @@ end
 
 local function RuleTypeLabel(ruleType)
 	if ruleType == "AURA" then
-		return "Buff"
+		return L("buff")
 	end
-	return "Spell"
+	return L("spell")
 end
 
 local function NormalizeSound(sound)
@@ -217,6 +442,174 @@ local function FormatSoundLabel(sound)
 
 	local path = sound.path or ""
 	return "Custom: " .. (path:match("[^\\]+$") or path)
+end
+
+local function EncodeToken(value)
+	value = tostring(value or "")
+	return (value:gsub("([^%w _%.%-])", function(char)
+		return string.format("%%%02X", string.byte(char))
+	end))
+end
+
+local function DecodeToken(value)
+	value = tostring(value or "")
+	return (value:gsub("%%(%x%x)", function(hex)
+		return string.char(tonumber(hex, 16))
+	end))
+end
+
+local function SplitLine(line)
+	local parts = {}
+	for part in string.gmatch(line .. "|", "(.-)|") do
+		parts[#parts + 1] = DecodeToken(part)
+	end
+	return parts
+end
+
+local function SoundToTokens(sound)
+	sound = NormalizeSound(sound)
+	if not sound then
+		return { "file", "" }
+	end
+
+	if sound.type == "kit" then
+		return { "kit", tostring(sound.kit or ""), sound.label or "" }
+	elseif sound.type == "lsm" then
+		return { "lsm", sound.name or "", sound.path or "", sound.label or "" }
+	end
+
+	return { "file", sound.path or "" }
+end
+
+local function TokensToSound(parts, startIndex)
+	local soundType = parts[startIndex]
+	if soundType == "kit" then
+		return NormalizeSound({
+			type = "kit",
+			kit = parts[startIndex + 1],
+			label = parts[startIndex + 2],
+		})
+	elseif soundType == "lsm" then
+		return NormalizeSound({
+			type = "lsm",
+			name = parts[startIndex + 1],
+			path = parts[startIndex + 2],
+			label = parts[startIndex + 3],
+		})
+	end
+
+	return NormalizeSound({
+		type = "file",
+		path = parts[startIndex + 1],
+	})
+end
+
+local function SerializeProfile(profile)
+	profile = profile or MakeProfileFromDB(DB())
+	local lines = {
+		PROFILE_EXPORT_VERSION,
+		table.concat({
+			"S",
+			EncodeToken(profile.enabled ~= false and "1" or "0"),
+			EncodeToken(profile.channel or "Master"),
+			EncodeToken(profile.locale or "en"),
+		}, "|"),
+	}
+
+	local ruleKeys = {}
+	for key in pairs(profile.rules or {}) do
+		ruleKeys[#ruleKeys + 1] = key
+	end
+	table.sort(ruleKeys)
+
+	for _, key in ipairs(ruleKeys) do
+		local rule = profile.rules[key]
+		local soundTokens = SoundToTokens(rule.sound)
+		local parts = {
+			"R",
+			rule.type or "SPELL",
+			tostring(rule.id or ""),
+			rule.trigger or "ANY",
+			rule.name or "",
+		}
+		for _, token in ipairs(soundTokens) do
+			parts[#parts + 1] = token
+		end
+		for index, value in ipairs(parts) do
+			parts[index] = EncodeToken(value)
+		end
+		lines[#lines + 1] = table.concat(parts, "|")
+	end
+
+	local muted = {}
+	for fileID, enabled in pairs(profile.mutedSoundFileIDs or {}) do
+		if enabled then
+			muted[#muted + 1] = tostring(fileID)
+		end
+	end
+	table.sort(muted)
+	for _, fileID in ipairs(muted) do
+		lines[#lines + 1] = "M|" .. EncodeToken(fileID)
+	end
+
+	return table.concat(lines, "\n")
+end
+
+local function DeserializeProfile(text)
+	text = Trim(text)
+	if text == "" then
+		return nil, L("noImportString")
+	end
+
+	local profile = {
+		enabled = true,
+		channel = "Master",
+		locale = "en",
+		rules = {},
+		mutedSoundFileIDs = {},
+	}
+
+	local first = true
+	for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
+		line = Trim(line)
+		if line ~= "" then
+			if first then
+				first = false
+				if line ~= PROFILE_EXPORT_VERSION then
+					return nil, "Unsupported profile string."
+				end
+			else
+				local parts = SplitLine(line)
+				if parts[1] == "S" then
+					profile.enabled = parts[2] ~= "0"
+					profile.channel = parts[3] ~= "" and parts[3] or "Master"
+					profile.locale = (parts[4] == "ko") and "ko" or "en"
+				elseif parts[1] == "R" then
+					local ruleType = (parts[2] == "AURA" or parts[2] == "SPELL") and parts[2] or "SPELL"
+					local id = tonumber(parts[3])
+					local trigger = parts[4] or "ANY"
+					local sound = TokensToSound(parts, 6)
+					local key = RuleKey(ruleType, id)
+					if key and sound then
+						profile.rules[key] = {
+							type = ruleType,
+							id = id,
+							trigger = trigger,
+							name = parts[5] ~= "" and parts[5] or GetSpellName(id),
+							sound = sound,
+						}
+					end
+				elseif parts[1] == "M" then
+					local fileID = tonumber(parts[2])
+					if fileID then
+						profile.mutedSoundFileIDs[fileID] = true
+					end
+				end
+			end
+		end
+	end
+
+	return profile
 end
 
 local function GetSharedMedia()
@@ -333,7 +726,7 @@ local function PlaySelectedSound(sound)
 	end
 end
 
-local function ApplyMutedSoundFiles()
+function ApplyMutedSoundFiles()
 	for fileID, muted in pairs(DB().mutedSoundFileIDs) do
 		local numericID = tonumber(fileID)
 		if numericID and muted and MuteSoundFile then
@@ -626,9 +1019,9 @@ local function UpdateRuleButtons()
 		return
 	end
 
-	ui.typeButton:SetText("Track: " .. RuleTypeLabel(ui.currentRuleType))
-	ui.triggerButton:SetText("Trigger: " .. (ui.currentTrigger or "SUCCEEDED"))
-	ui.idLabel:SetText(RuleTypeLabel(ui.currentRuleType) .. " ID")
+	ui.typeButton:SetText(L("track", RuleTypeLabel(ui.currentRuleType)))
+	ui.triggerButton:SetText(L("trigger", ui.currentTrigger or "SUCCEEDED"))
+	ui.idLabel:SetText(L("spellOrBuffID", RuleTypeLabel(ui.currentRuleType)))
 end
 
 local function RefreshSoundSelector()
@@ -636,7 +1029,7 @@ local function RefreshSoundSelector()
 		return
 	end
 
-	ui.soundModeButton:SetText(ui.currentSoundMode == "CUSTOM" and "Source: Custom file" or "Source: Alert list")
+	ui.soundModeButton:SetText(ui.currentSoundMode == "CUSTOM" and L("customFile") or L("soundSource"))
 	ui.soundPickerButton:SetText(FormatSoundLabel(ui.currentSound))
 
 	local custom = ui.currentSoundMode == "CUSTOM"
@@ -730,17 +1123,25 @@ local function RefreshSettingsPanel()
 
 	local db = DB()
 	settingsPanel.enabled:SetChecked(db.enabled)
-	settingsPanel.channelButton:SetText("Sound channel: " .. (db.channel or "Master"))
-	settingsPanel.mappingCount:SetText("Saved rules: " .. CountRules())
-
-	local spellText = "Last spell: none yet"
-	if lastSpell.id then
-		spellText = "Last spell: " .. (lastSpell.name or "Unknown") .. " (" .. lastSpell.id .. ")"
+	settingsPanel.enabled.Text:SetText(L("settingsEnable"))
+	settingsPanel.channelButton:SetText(L("settingsChannel", db.channel or "Master"))
+	settingsPanel.openButton:SetText(L("settingsOpen"))
+	settingsPanel.mappingCount:SetText(L("settingsCount", CountRules()))
+	if settingsPanel.description then
+		settingsPanel.description:SetText(L("settingsDescription"))
+	end
+	if settingsPanel.note then
+		settingsPanel.note:SetText(L("settingsTip"))
 	end
 
-	local auraText = "Last buff: none yet"
+	local spellText = L("lastSpellNone")
+	if lastSpell.id then
+		spellText = L("lastSpell", (lastSpell.name or "Unknown") .. " (" .. lastSpell.id .. ")")
+	end
+
+	local auraText = L("lastBuffNone")
 	if lastAura.id then
-		auraText = "Last buff: " .. (lastAura.name or "Unknown") .. " (" .. lastAura.id .. ")"
+		auraText = L("lastBuff", (lastAura.name or "Unknown") .. " (" .. lastAura.id .. ")")
 	end
 
 	settingsPanel.lastSpell:SetText(spellText)
@@ -754,20 +1155,31 @@ local function RefreshUI()
 
 	local db = DB()
 	ui.enabled:SetChecked(db.enabled)
-	ui.channelButton:SetText("Channel: " .. (db.channel or "Master"))
+	ui.enabled.Text:SetText(L("enabled"))
+	ui.channelButton:SetText(L("channel", db.channel or "Master"))
+	ui.languageButton:SetText(L("language"))
+	ui.profileButton:SetText(L("profile", db.activeProfile or "Default"))
+	ui.exportButton:SetText(L("export"))
+	ui.importButton:SetText(L("import"))
+	ui.saveButton:SetText(L("addUpdate"))
+	ui.previewButton:SetText(L("preview"))
+	ui.useLastButton:SetText(L("useLast"))
+	ui.title:SetText(L("soundEditor"))
+	ui.hint:SetText(L("alertListHint"))
+	ui.rulesHeader:SetText(L("rules"))
 	UpdateRuleButtons()
 	RefreshSoundSelector()
 
 	if lastSpell.id then
-		ui.lastSpellText:SetText("Last spell: " .. (lastSpell.name or "Unknown") .. " (" .. lastSpell.id .. ") via " .. (lastSpell.trigger or "?"))
+		ui.lastSpellText:SetText(L("lastSpell", (lastSpell.name or "Unknown") .. " (" .. lastSpell.id .. ") via " .. (lastSpell.trigger or "?")))
 	else
-		ui.lastSpellText:SetText("Last spell: none yet")
+		ui.lastSpellText:SetText(L("lastSpellNone"))
 	end
 
 	if lastAura.id then
-		ui.lastAuraText:SetText("Last buff: " .. (lastAura.name or "Unknown") .. " (" .. lastAura.id .. ") via " .. (lastAura.trigger or "?"))
+		ui.lastAuraText:SetText(L("lastBuff", (lastAura.name or "Unknown") .. " (" .. lastAura.id .. ") via " .. (lastAura.trigger or "?")))
 	else
-		ui.lastAuraText:SetText("Last buff: none yet")
+		ui.lastAuraText:SetText(L("lastBuffNone"))
 	end
 
 	local keys = SortedRuleKeys()
@@ -779,7 +1191,7 @@ local function RefreshUI()
 		page = 1
 	end
 
-	ui.pageText:SetText("Page " .. page .. " / " .. totalPages)
+	ui.pageText:SetText(L("page", page, totalPages))
 	ui.prevButton:SetEnabled(page > 1)
 	ui.nextButton:SetEnabled(page < totalPages)
 
@@ -833,6 +1245,7 @@ local function UpsertRule(ruleType, id, trigger, sound)
 		trigger = trigger,
 		sound = sound,
 	}
+	SaveCurrentProfile()
 
 	Print("Mapped " .. RuleTypeLabel(ruleType) .. " " .. id .. " to " .. FormatSoundLabel(sound) .. ".")
 	RefreshUI()
@@ -843,6 +1256,7 @@ end
 local function RemoveRule(key)
 	if key and DB().rules[key] then
 		DB().rules[key] = nil
+		SaveCurrentProfile()
 		Print("Removed rule " .. key .. ".")
 	end
 	RefreshUI()
@@ -1005,6 +1419,189 @@ local function CreateSoundDropdown(parent)
 	return dropdown
 end
 
+local function RefreshProfileDropdown()
+	if not ui or not ui.profileDropdown then
+		return
+	end
+
+	local names = GetProfileNames()
+	ui.profileDropdown:SetHeight(16 + (#names * 25))
+
+	for index, name in ipairs(names) do
+		local button = ui.profileDropdown.buttons[index]
+		if not button then
+			button = CreateButton(ui.profileDropdown, "", 156)
+			button:SetPoint("TOPLEFT", 12, -10 - ((index - 1) * 25))
+			button:SetScript("OnClick", function(self)
+				if self.profileName then
+					SaveCurrentProfile()
+					ActivateProfile(self.profileName)
+					ui.profileDropdown:Hide()
+					RefreshUI()
+					RefreshSettingsPanel()
+				end
+			end)
+			ui.profileDropdown.buttons[index] = button
+		end
+
+		button.profileName = name
+		button:SetText(name)
+		button:Show()
+	end
+
+	for index = #names + 1, #ui.profileDropdown.buttons do
+		ui.profileDropdown.buttons[index]:Hide()
+	end
+end
+
+local function CreateProfileDropdown(parent)
+	local dropdown = CreateFrame("Frame", nil, parent)
+	dropdown:SetSize(180, 41)
+	dropdown:SetPoint("BOTTOMLEFT", parent.profileButton, "TOPLEFT", 0, 4)
+	dropdown:SetFrameStrata("DIALOG")
+	dropdown:SetFrameLevel(parent:GetFrameLevel() + 20)
+	dropdown:Hide()
+	AddBackground(dropdown, material.panel, material.borderBright)
+
+	dropdown.buttons = {}
+
+	return dropdown
+end
+
+local function ToggleProfileDropdown()
+	if not ui or not ui.profileDropdown then
+		return
+	end
+
+	if ui.profileDropdown:IsShown() then
+		ui.profileDropdown:Hide()
+	else
+		RefreshProfileDropdown()
+		ui.profileDropdown:Show()
+	end
+end
+
+local function CreateTextDialog(name, titleKey, width, height)
+	local dialog = CreateFrame("Frame", name, UIParent)
+	dialog:SetSize(width, height)
+	dialog:SetPoint("CENTER")
+	dialog:SetFrameStrata("DIALOG")
+	dialog:SetFrameLevel(80)
+	dialog:EnableMouse(true)
+	dialog:SetMovable(true)
+	dialog:RegisterForDrag("LeftButton")
+	dialog:SetScript("OnDragStart", dialog.StartMoving)
+	dialog:SetScript("OnDragStop", dialog.StopMovingOrSizing)
+	dialog:Hide()
+	AddBackground(dialog, material.panel, material.borderBright)
+
+	dialog.title = dialog:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	dialog.title:SetPoint("TOPLEFT", 12, -10)
+	dialog.title:SetText(L(titleKey))
+
+	dialog.close = CreateButton(dialog, "X", 26)
+	dialog.close:SetPoint("TOPRIGHT", -8, -7)
+	dialog.close:SetScript("OnClick", function()
+		dialog:Hide()
+	end)
+
+	return dialog
+end
+
+local function ShowExportDialog(exportText)
+	if not ui.exportDialog then
+		local dialog = CreateTextDialog(ADDON_NAME .. "ExportDialog", "exportTitle", 640, 220)
+		dialog.box = CreateEditBox(dialog, 610)
+		dialog.box:SetPoint("TOPLEFT", 14, -42)
+		dialog.box:SetHeight(126)
+		dialog.box:SetMultiLine(true)
+		dialog.box:SetMaxLetters(0)
+
+		dialog.note = dialog:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+		dialog.note:SetPoint("TOPLEFT", dialog.box, "BOTTOMLEFT", 0, -10)
+		dialog.note:SetWidth(610)
+		dialog.note:SetJustifyH("LEFT")
+
+		ui.exportDialog = dialog
+	end
+
+	local copied = false
+	if CopyToClipboard then
+		local ok = pcall(CopyToClipboard, exportText)
+		copied = ok
+	end
+
+	ui.exportDialog.title:SetText(L("exportTitle"))
+	ui.exportDialog.box:SetText(exportText)
+	ui.exportDialog.box:SetFocus()
+	ui.exportDialog.box:HighlightText()
+	ui.exportDialog.note:SetText(copied and L("copied") or L("copyFallback"))
+	ui.exportDialog:Show()
+	Print(copied and L("copied") or L("copyFallback"))
+end
+
+local function ShowImportDialog()
+	if not ui.importDialog then
+		local dialog = CreateTextDialog(ADDON_NAME .. "ImportDialog", "importTitle", 640, 330)
+
+		dialog.nameLabel = CreateLabel(dialog, L("importName"), 260)
+		dialog.nameLabel:SetPoint("TOPLEFT", 16, -44)
+		dialog.nameBox = CreateEditBox(dialog, 608)
+		dialog.nameBox:SetPoint("TOPLEFT", dialog.nameLabel, "BOTTOMLEFT", 0, -6)
+
+		dialog.stringLabel = CreateLabel(dialog, L("importString"), 260)
+		dialog.stringLabel:SetPoint("TOPLEFT", dialog.nameBox, "BOTTOMLEFT", 0, -14)
+		dialog.stringBox = CreateEditBox(dialog, 608)
+		dialog.stringBox:SetPoint("TOPLEFT", dialog.stringLabel, "BOTTOMLEFT", 0, -6)
+		dialog.stringBox:SetHeight(142)
+		dialog.stringBox:SetMultiLine(true)
+		dialog.stringBox:SetMaxLetters(0)
+
+		dialog.apply = CreateButton(dialog, L("import"), 150)
+		dialog.apply:SetPoint("BOTTOMRIGHT", -16, 14)
+		dialog.apply:SetScript("OnClick", function()
+			local profileName = NormalizeProfileName(dialog.nameBox:GetText())
+			local importString = dialog.stringBox:GetText()
+			if Trim(dialog.nameBox:GetText()) == "" then
+				Print(L("noImportName"))
+				return
+			end
+			if Trim(importString) == "" then
+				Print(L("noImportString"))
+				return
+			end
+
+			local profile, errorMessage = DeserializeProfile(importString)
+			if not profile then
+				Print(errorMessage or "Could not import profile.")
+				return
+			end
+
+			local db = DB()
+			db.profiles[profileName] = profile
+			db.activeProfile = profileName
+			BindActiveProfile(db)
+			ApplyMutedSoundFiles()
+			auraStates = {}
+			dialog:Hide()
+			RefreshUI()
+			RefreshSettingsPanel()
+			Print(L("profileImported", profileName))
+		end)
+
+		ui.importDialog = dialog
+	end
+
+	ui.importDialog.title:SetText(L("importTitle"))
+	ui.importDialog.nameLabel:SetText(L("importName"))
+	ui.importDialog.stringLabel:SetText(L("importString"))
+	ui.importDialog.apply:SetText(L("import"))
+	ui.importDialog.nameBox:SetText("")
+	ui.importDialog.stringBox:SetText("")
+	ui.importDialog:Show()
+	ui.importDialog.nameBox:SetFocus()
+end
+
 local function CreateUI()
 	if ui then
 		return ui
@@ -1056,6 +1653,7 @@ local function CreateUI()
 	ui.enabled:SetScript("OnClick", function(self)
 		self.mark:SetShown(self:GetChecked())
 		DB().enabled = self:GetChecked() and true or false
+		SaveCurrentProfile()
 		RefreshUI()
 		RefreshSettingsPanel()
 	end)
@@ -1065,6 +1663,17 @@ local function CreateUI()
 	ui.channelButton:SetScript("OnClick", function()
 		local db = DB()
 		db.channel = NextValue(CHANNELS, db.channel or "Master")
+		SaveCurrentProfile()
+		RefreshUI()
+		RefreshSettingsPanel()
+	end)
+
+	ui.languageButton = CreateButton(frame, L("language"), 150)
+	ui.languageButton:SetPoint("LEFT", ui.channelButton, "RIGHT", 12, 0)
+	ui.languageButton:SetScript("OnClick", function()
+		local db = DB()
+		db.locale = db.locale == "ko" and "en" or "ko"
+		SaveCurrentProfile()
 		RefreshUI()
 		RefreshSettingsPanel()
 	end)
@@ -1140,14 +1749,14 @@ local function CreateUI()
 		UpsertRule(ui.currentRuleType, ui.idBox:GetText(), ui.currentTrigger, GetEditorSound())
 	end)
 
-	local hint = frame:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
-	hint:SetPoint("TOPLEFT", 184, -166)
-	hint:SetWidth(690)
-	hint:SetJustifyH("LEFT")
-	hint:SetText("Alert list sounds come from LibSharedMedia, the same source used by ElvUI chat alerts. Custom files still go in Interface\\AddOns\\GameSoundChanger\\Sounds.")
+	ui.hint = frame:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+	ui.hint:SetPoint("TOPLEFT", 184, -166)
+	ui.hint:SetWidth(690)
+	ui.hint:SetJustifyH("LEFT")
+	ui.hint:SetText(L("alertListHint"))
 
-	local header = CreateLabel(frame, "Rules", 100)
-	header:SetPoint("TOPLEFT", 20, -202)
+	ui.rulesHeader = CreateLabel(frame, L("rules"), 100)
+	ui.rulesHeader:SetPoint("TOPLEFT", 20, -202)
 
 	ui.prevButton = CreateButton(frame, "<", 32)
 	ui.prevButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -130, -198)
@@ -1231,6 +1840,23 @@ local function CreateUI()
 
 	ui.soundDropdown = CreateSoundDropdown(frame)
 
+	ui.profileButton = CreateDropdownControl(frame, 180)
+	ui.profileButton:SetPoint("BOTTOMLEFT", 20, 18)
+	ui.profileButton:SetScript("OnClick", ToggleProfileDropdown)
+
+	ui.exportButton = CreateButton(frame, L("export"), 150)
+	ui.exportButton:SetPoint("LEFT", ui.profileButton, "RIGHT", 10, 0)
+	ui.exportButton:SetScript("OnClick", function()
+		SaveCurrentProfile()
+		ShowExportDialog(SerializeProfile(DB().profiles[DB().activeProfile]))
+	end)
+
+	ui.importButton = CreateButton(frame, L("import"), 150)
+	ui.importButton:SetPoint("LEFT", ui.exportButton, "RIGHT", 10, 0)
+	ui.importButton:SetScript("OnClick", ShowImportDialog)
+
+	ui.profileDropdown = CreateProfileDropdown(frame)
+
 	RefreshUI()
 	return ui
 end
@@ -1286,12 +1912,14 @@ local function RegisterSettingsPanel()
 	description:SetWidth(620)
 	description:SetJustifyH("LEFT")
 	description:SetText("Choose player spells or player buff activations, then play named alert sounds from LibSharedMedia or custom audio.")
+	panel.description = description
 
 	panel.enabled = CreateCheckButton(panel, "Enable custom sounds")
 	panel.enabled:SetPoint("TOPLEFT", description, "BOTTOMLEFT", 0, -18)
 	panel.enabled:SetScript("OnClick", function(self)
 		self.mark:SetShown(self:GetChecked())
 		DB().enabled = self:GetChecked() and true or false
+		SaveCurrentProfile()
 		RefreshUI()
 		RefreshSettingsPanel()
 	end)
@@ -1301,6 +1929,7 @@ local function RegisterSettingsPanel()
 	panel.channelButton:SetScript("OnClick", function()
 		local db = DB()
 		db.channel = NextValue(CHANNELS, db.channel or "Master")
+		SaveCurrentProfile()
 		RefreshUI()
 		RefreshSettingsPanel()
 	end)
@@ -1329,6 +1958,7 @@ local function RegisterSettingsPanel()
 	note:SetWidth(620)
 	note:SetJustifyH("LEFT")
 	note:SetText("Tip: cast a spell or gain a buff, open the sound editor, press Use Last, then choose an alert sound.")
+	panel.note = note
 
 	panel:SetScript("OnShow", RefreshSettingsPanel)
 
@@ -1371,12 +2001,14 @@ local function HandleSlash(message)
 		OpenSettingsCategory()
 	elseif command == "on" then
 		DB().enabled = true
-		Print("Enabled.")
+		SaveCurrentProfile()
+		Print(L("enabledMessage"))
 		RefreshUI()
 		RefreshSettingsPanel()
 	elseif command == "off" then
 		DB().enabled = false
-		Print("Disabled.")
+		SaveCurrentProfile()
+		Print(L("disabled"))
 		RefreshUI()
 		RefreshSettingsPanel()
 	elseif command == "last" then
@@ -1419,6 +2051,7 @@ local function HandleSlash(message)
 		if fileID and MuteSoundFile then
 			DB().mutedSoundFileIDs[fileID] = true
 			MuteSoundFile(fileID)
+			SaveCurrentProfile()
 			Print("Muted sound file ID " .. fileID .. ".")
 		else
 			Print("Enter a numeric sound file ID.")
@@ -1428,6 +2061,7 @@ local function HandleSlash(message)
 		if fileID and UnmuteSoundFile then
 			DB().mutedSoundFileIDs[fileID] = nil
 			UnmuteSoundFile(fileID)
+			SaveCurrentProfile()
 			Print("Unmuted sound file ID " .. fileID .. ".")
 		else
 			Print("Enter a numeric sound file ID.")
@@ -1464,28 +2098,20 @@ local function HandleSpellEvent(event, unit, castGUID, spellID)
 	end
 end
 
-local function HandleCombatLogEvent()
-	if not CombatLogGetCurrentEventInfo then
-		return
-	end
-
-	local _, subevent, _, _, _, _, _, destGUID, _, _, _, spellID, spellName, _, auraType = CombatLogGetCurrentEventInfo()
-	if auraType ~= "BUFF" then
-		return
-	end
-	if subevent ~= "SPELL_AURA_APPLIED" and subevent ~= "SPELL_AURA_REFRESH" then
-		return
-	end
-	if destGUID ~= UnitGUID("player") then
-		return
-	end
-
-	spellID = tonumber(spellID)
+local function HandlePlayerAura(spellID, spellName, trigger, processed)
+	spellID = SafeNumber(spellID)
 	if not spellID then
 		return
 	end
 
-	local trigger = subevent == "SPELL_AURA_REFRESH" and "REFRESH" or "APPLIED"
+	local key = RuleKey("AURA", spellID)
+	if processed and processed[key] then
+		return
+	end
+	if processed then
+		processed[key] = true
+	end
+
 	lastAura.id = spellID
 	lastAura.name = spellName or GetSpellName(spellID)
 	lastAura.trigger = trigger
@@ -1495,10 +2121,75 @@ local function HandleCombatLogEvent()
 	end
 	RefreshSettingsPanel()
 
-	local rule = DB().rules[RuleKey("AURA", spellID)]
+	local rule = DB().rules[key]
 	if DB().enabled and rule and TriggerMatches(rule.trigger, trigger) then
 		PlaySelectedSound(rule.sound)
 	end
+end
+
+local function ScanPlayerAuras(processed)
+	local active = {}
+
+	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+		for index = 1, 80 do
+			local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "player", index, "HELPFUL")
+			if not ok or not aura then
+				break
+			end
+
+					local spellID = SafeNumber(aura.spellId)
+			if spellID then
+				active[spellID] = true
+				if not auraStates[spellID] then
+					HandlePlayerAura(spellID, aura.name, "APPLIED", processed)
+				end
+			end
+		end
+	elseif UnitAura then
+		for index = 1, 80 do
+			local name, _, _, _, _, _, _, _, _, spellID = UnitAura("player", index, "HELPFUL")
+			if not name then
+				break
+			end
+			spellID = SafeNumber(spellID)
+			if spellID then
+				active[spellID] = true
+				if not auraStates[spellID] then
+					HandlePlayerAura(spellID, name, "APPLIED", processed)
+				end
+			end
+		end
+	end
+
+	auraStates = active
+end
+
+local function HandleUnitAura(unit, updateInfo)
+	if unit ~= "player" then
+		return
+	end
+
+	local processed = {}
+	if type(updateInfo) == "table" then
+		if type(updateInfo.addedAuras) == "table" then
+			for _, aura in ipairs(updateInfo.addedAuras) do
+				if aura and aura.isHelpful ~= false then
+					HandlePlayerAura(aura.spellId, aura.name, "APPLIED", processed)
+				end
+			end
+		end
+
+		if C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID and type(updateInfo.updatedAuraInstanceIDs) == "table" then
+			for _, auraInstanceID in ipairs(updateInfo.updatedAuraInstanceIDs) do
+				local ok, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", auraInstanceID)
+				if ok and aura and aura.isHelpful ~= false then
+					HandlePlayerAura(aura.spellId, aura.name, "REFRESH", processed)
+				end
+			end
+		end
+	end
+
+	ScanPlayerAuras(processed)
 end
 
 addon:SetScript("OnEvent", function(self, event, ...)
@@ -1515,8 +2206,8 @@ addon:SetScript("OnEvent", function(self, event, ...)
 		Print("Type /gsc to open the sound editor, or /gsc menu for AddOns settings.")
 	elseif EVENT_TO_TRIGGER[event] then
 		HandleSpellEvent(event, ...)
-	elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
-		HandleCombatLogEvent()
+	elseif event == "UNIT_AURA" then
+		HandleUnitAura(...)
 	end
 end)
 
@@ -1525,7 +2216,7 @@ addon:RegisterEvent("PLAYER_LOGIN")
 addon:RegisterEvent("UNIT_SPELLCAST_START")
 addon:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 addon:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
-addon:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+addon:RegisterUnitEvent("UNIT_AURA", "player")
 
 SLASH_GAMESOUNDCHANGER1 = "/gsc"
 SLASH_GAMESOUNDCHANGER2 = "/gamesoundchanger"
