@@ -2,7 +2,7 @@
 ## Title: GameSoundChanger
 ## Notes: Replace selected player spell sounds with custom addon audio.
 ## Author: Codex
-## Version: 0.1.1-beta
+## Version: 0.1.2-beta
 ## OptionalDeps: LibSharedMedia-3.0, SharedMedia, SharedMedia_Causese, ElvUI, ElvUI_WindTools, Details, DBM-Core
 ## SavedVariables: GameSoundChangerDB
 
