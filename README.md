@@ -2,15 +2,7 @@
 
 GameSoundChanger is a retail WoW addon prototype that maps player spell casts or player buff activations to custom sounds.
 
-## Install
-
-Copy the `GameSoundChanger` folder into:
-
-```text
-D:\World of Warcraft\_retail_\Interface\AddOns\
-```
-
-Then restart the WoW client.
+This addon was created with vibe coding.
 
 ## Use
 
@@ -50,15 +42,7 @@ Dropdown choices come from `LibSharedMedia-3.0`, the same named sound pool used 
 
 GameSoundChanger는 월드 오브 워크래프트 리테일용 애드온입니다. 플레이어의 특정 주문 시전이나 버프 발동을 감지해서 원하는 커스텀 효과음을 재생할 수 있습니다.
 
-### 설치
-
-`GameSoundChanger` 폴더를 아래 경로에 복사합니다.
-
-```text
-D:\World of Warcraft\_retail_\Interface\AddOns\
-```
-
-이후 와우 클라이언트를 완전히 재시작합니다.
+이 애드온은 바이브 코딩으로 작성되었습니다.
 
 ### 사용 방법
 
