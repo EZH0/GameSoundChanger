@@ -411,6 +411,67 @@ local function SortedRuleKeys()
 	return keys
 end
 
+local material = {
+	panel = { 0.025, 0.027, 0.031, 0.98 },
+	panelTop = { 0.045, 0.048, 0.054, 1 },
+	panelInset = { 0.012, 0.013, 0.016, 0.86 },
+	control = { 0.038, 0.041, 0.047, 0.96 },
+	controlHover = { 0.075, 0.081, 0.091, 0.98 },
+	controlDown = { 0.018, 0.02, 0.024, 1 },
+	rowOdd = { 0.025, 0.027, 0.031, 0.64 },
+	rowEven = { 0.042, 0.045, 0.052, 0.62 },
+	border = { 0.18, 0.19, 0.21, 1 },
+	borderBright = { 0.34, 0.36, 0.39, 1 },
+	accent = { 0.16, 0.68, 0.92, 1 },
+	text = { 0.86, 0.88, 0.9, 1 },
+	textDim = { 0.58, 0.61, 0.65, 1 },
+}
+
+local function SetVertexColor(texture, color)
+	texture:SetColorTexture(color[1], color[2], color[3], color[4])
+end
+
+local function AddBorder(frame, color)
+	color = color or material.border
+
+	frame.leftBorder = frame:CreateTexture(nil, "BORDER")
+	frame.leftBorder:SetPoint("TOPLEFT")
+	frame.leftBorder:SetPoint("BOTTOMLEFT")
+	frame.leftBorder:SetWidth(1)
+	SetVertexColor(frame.leftBorder, color)
+
+	frame.rightBorder = frame:CreateTexture(nil, "BORDER")
+	frame.rightBorder:SetPoint("TOPRIGHT")
+	frame.rightBorder:SetPoint("BOTTOMRIGHT")
+	frame.rightBorder:SetWidth(1)
+	SetVertexColor(frame.rightBorder, color)
+
+	frame.topBorder = frame:CreateTexture(nil, "BORDER")
+	frame.topBorder:SetPoint("TOPLEFT")
+	frame.topBorder:SetPoint("TOPRIGHT")
+	frame.topBorder:SetHeight(1)
+	SetVertexColor(frame.topBorder, color)
+
+	frame.bottomBorder = frame:CreateTexture(nil, "BORDER")
+	frame.bottomBorder:SetPoint("BOTTOMLEFT")
+	frame.bottomBorder:SetPoint("BOTTOMRIGHT")
+	frame.bottomBorder:SetHeight(1)
+	SetVertexColor(frame.bottomBorder, color)
+end
+
+local function AddBackground(frame, color, borderColor)
+	frame.bg = frame:CreateTexture(nil, "BACKGROUND")
+	frame.bg:SetAllPoints()
+	SetVertexColor(frame.bg, color)
+	AddBorder(frame, borderColor)
+end
+
+local function ApplyButtonState(button, color)
+	if button.bg then
+		SetVertexColor(button.bg, color)
+	end
+end
+
 local function CreateLabel(parent, text, width)
 	local label = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 	label:SetJustifyH("LEFT")
@@ -422,17 +483,68 @@ local function CreateLabel(parent, text, width)
 end
 
 local function CreateButton(parent, text, width)
-	local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+	local button = CreateFrame("Button", nil, parent)
 	button:SetSize(width or 96, 24)
+	AddBackground(button, material.control, material.border)
+
+	button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
+	button.highlight:SetAllPoints()
+	SetVertexColor(button.highlight, { 0.13, 0.58, 0.82, 0.16 })
+
+	button.label = button:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	button.label:SetPoint("LEFT", 8, 0)
+	button.label:SetPoint("RIGHT", -8, 0)
+	button.label:SetJustifyH("CENTER")
+	button.label:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
+
+	button.SetText = function(self, value)
+		self.label:SetText(value or "")
+	end
+	button.GetText = function(self)
+		return self.label:GetText()
+	end
 	button:SetText(text)
+
+	button:SetScript("OnEnter", function(self)
+		if self:IsEnabled() then
+			ApplyButtonState(self, material.controlHover)
+		end
+	end)
+	button:SetScript("OnLeave", function(self)
+		ApplyButtonState(self, material.control)
+	end)
+	button:SetScript("OnMouseDown", function(self)
+		if self:IsEnabled() then
+			ApplyButtonState(self, material.controlDown)
+			self.label:ClearAllPoints()
+			self.label:SetPoint("CENTER", 1, -1)
+		end
+	end)
+	button:SetScript("OnMouseUp", function(self)
+		ApplyButtonState(self, self:IsMouseOver() and material.controlHover or material.control)
+		self.label:ClearAllPoints()
+		self.label:SetPoint("LEFT", 8, 0)
+		self.label:SetPoint("RIGHT", -8, 0)
+	end)
+	button:SetScript("OnDisable", function(self)
+		ApplyButtonState(self, { 0.026, 0.028, 0.032, 0.72 })
+		self.label:SetTextColor(material.textDim[1], material.textDim[2], material.textDim[3], 0.55)
+	end)
+	button:SetScript("OnEnable", function(self)
+		ApplyButtonState(self, material.control)
+		self.label:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
+	end)
 	return button
 end
 
 local function CreateEditBox(parent, width)
-	local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+	local box = CreateFrame("EditBox", nil, parent)
 	box:SetSize(width, 24)
 	box:SetAutoFocus(false)
 	box:SetFontObject("ChatFontNormal")
+	box:SetTextInsets(8, 8, 0, 0)
+	box:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
+	AddBackground(box, material.panelInset, material.border)
 	box:SetScript("OnEscapePressed", function(self)
 		self:ClearFocus()
 	end)
@@ -442,52 +554,64 @@ local function CreateEditBox(parent, width)
 	return box
 end
 
+local function CreateCheckButton(parent, text)
+	local check = CreateFrame("CheckButton", nil, parent)
+	check:SetSize(22, 22)
+
+	AddBackground(check, material.panelInset, material.border)
+
+	check.mark = check:CreateTexture(nil, "ARTWORK")
+	check.mark:SetPoint("CENTER")
+	check.mark:SetSize(12, 12)
+	SetVertexColor(check.mark, material.accent)
+	check.mark:Hide()
+
+	check.Text = check:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	check.Text:SetPoint("LEFT", check, "RIGHT", 8, 0)
+	check.Text:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
+	check.Text:SetText(text or "")
+
+	check:SetScript("OnClick", function(self)
+		self.mark:SetShown(self:GetChecked())
+	end)
+
+	check:HookScript("OnEnter", function(self)
+		SetVertexColor(self.bg, material.controlHover)
+	end)
+	check:HookScript("OnLeave", function(self)
+		SetVertexColor(self.bg, material.panelInset)
+	end)
+
+	local originalSetChecked = check.SetChecked
+	check.SetChecked = function(self, checked)
+		originalSetChecked(self, checked)
+		self.mark:SetShown(checked)
+	end
+
+	return check
+end
+
 local function CreateDropdownControl(parent, width)
 	local control = CreateFrame("Button", nil, parent)
 	control:SetSize(width, 24)
-
-	control.bg = control:CreateTexture(nil, "BACKGROUND")
-	control.bg:SetAllPoints()
-	control.bg:SetColorTexture(0.055, 0.055, 0.065, 0.95)
+	AddBackground(control, material.control, material.border)
 
 	control.highlight = control:CreateTexture(nil, "HIGHLIGHT")
 	control.highlight:SetAllPoints()
-	control.highlight:SetColorTexture(0.22, 0.28, 0.34, 0.22)
-
-	control.leftBorder = control:CreateTexture(nil, "BORDER")
-	control.leftBorder:SetPoint("TOPLEFT")
-	control.leftBorder:SetPoint("BOTTOMLEFT")
-	control.leftBorder:SetWidth(1)
-	control.leftBorder:SetColorTexture(0.42, 0.42, 0.45, 1)
-
-	control.rightBorder = control:CreateTexture(nil, "BORDER")
-	control.rightBorder:SetPoint("TOPRIGHT")
-	control.rightBorder:SetPoint("BOTTOMRIGHT")
-	control.rightBorder:SetWidth(1)
-	control.rightBorder:SetColorTexture(0.42, 0.42, 0.45, 1)
-
-	control.topBorder = control:CreateTexture(nil, "BORDER")
-	control.topBorder:SetPoint("TOPLEFT")
-	control.topBorder:SetPoint("TOPRIGHT")
-	control.topBorder:SetHeight(1)
-	control.topBorder:SetColorTexture(0.42, 0.42, 0.45, 1)
-
-	control.bottomBorder = control:CreateTexture(nil, "BORDER")
-	control.bottomBorder:SetPoint("BOTTOMLEFT")
-	control.bottomBorder:SetPoint("BOTTOMRIGHT")
-	control.bottomBorder:SetHeight(1)
-	control.bottomBorder:SetColorTexture(0.42, 0.42, 0.45, 1)
+	SetVertexColor(control.highlight, { 0.13, 0.58, 0.82, 0.16 })
 
 	control.text = control:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	control.text:SetPoint("LEFT", 8, 0)
 	control.text:SetPoint("RIGHT", -28, 0)
 	control.text:SetJustifyH("LEFT")
+	control.text:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
 	if control.text.SetWordWrap then
 		control.text:SetWordWrap(false)
 	end
 
 	control.arrow = control:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 	control.arrow:SetPoint("RIGHT", -9, 0)
+	control.arrow:SetTextColor(material.accent[1], material.accent[2], material.accent[3], material.accent[4])
 	control.arrow:SetText("v")
 
 	control.SetText = function(self, text)
@@ -787,26 +911,24 @@ local function CreateSoundChoiceRow(parent, width)
 
 	row.bg = row:CreateTexture(nil, "BACKGROUND")
 	row.bg:SetAllPoints()
-	row.bg:SetColorTexture(0, 0, 0, 0)
+	SetVertexColor(row.bg, { 0, 0, 0, 0 })
 
 	row.highlight = row:CreateTexture(nil, "HIGHLIGHT")
 	row.highlight:SetAllPoints()
-	row.highlight:SetColorTexture(0.18, 0.24, 0.3, 0.55)
+	SetVertexColor(row.highlight, { 0.13, 0.58, 0.82, 0.2 })
 
 	row.preview = CreateFrame("Button", nil, row)
 	row.preview:SetSize(18, 18)
 	row.preview:SetPoint("LEFT", 4, 0)
-
-	row.preview.bg = row.preview:CreateTexture(nil, "BACKGROUND")
-	row.preview.bg:SetAllPoints()
-	row.preview.bg:SetColorTexture(0.08, 0.08, 0.09, 0.95)
+	AddBackground(row.preview, material.control, material.border)
 
 	row.preview.highlight = row.preview:CreateTexture(nil, "HIGHLIGHT")
 	row.preview.highlight:SetAllPoints()
-	row.preview.highlight:SetColorTexture(0.24, 0.32, 0.38, 0.55)
+	SetVertexColor(row.preview.highlight, { 0.13, 0.58, 0.82, 0.2 })
 
 	row.preview.icon = row.preview:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 	row.preview.icon:SetPoint("CENTER", 1, 0)
+	row.preview.icon:SetTextColor(material.accent[1], material.accent[2], material.accent[3], material.accent[4])
 	row.preview.icon:SetText(">")
 
 	row.preview:SetScript("OnClick", function(self)
@@ -825,6 +947,7 @@ local function CreateSoundChoiceRow(parent, width)
 	row.label:SetPoint("LEFT", row.preview, "RIGHT", 8, 0)
 	row.label:SetPoint("RIGHT", -8, 0)
 	row.label:SetJustifyH("LEFT")
+	row.label:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
 	if row.label.SetWordWrap then
 		row.label:SetWordWrap(false)
 	end
@@ -847,34 +970,7 @@ local function CreateSoundDropdown(parent)
 	dropdown:SetFrameStrata("DIALOG")
 	dropdown:SetFrameLevel(parent:GetFrameLevel() + 20)
 	dropdown:Hide()
-
-	dropdown.bg = dropdown:CreateTexture(nil, "BACKGROUND")
-	dropdown.bg:SetAllPoints()
-	dropdown.bg:SetColorTexture(0.035, 0.035, 0.04, 0.96)
-
-	dropdown.leftBorder = dropdown:CreateTexture(nil, "BORDER")
-	dropdown.leftBorder:SetPoint("TOPLEFT")
-	dropdown.leftBorder:SetPoint("BOTTOMLEFT")
-	dropdown.leftBorder:SetWidth(1)
-	dropdown.leftBorder:SetColorTexture(0.34, 0.34, 0.38, 1)
-
-	dropdown.rightBorder = dropdown:CreateTexture(nil, "BORDER")
-	dropdown.rightBorder:SetPoint("TOPRIGHT")
-	dropdown.rightBorder:SetPoint("BOTTOMRIGHT")
-	dropdown.rightBorder:SetWidth(1)
-	dropdown.rightBorder:SetColorTexture(0.34, 0.34, 0.38, 1)
-
-	dropdown.topBorder = dropdown:CreateTexture(nil, "BORDER")
-	dropdown.topBorder:SetPoint("TOPLEFT")
-	dropdown.topBorder:SetPoint("TOPRIGHT")
-	dropdown.topBorder:SetHeight(1)
-	dropdown.topBorder:SetColorTexture(0.34, 0.34, 0.38, 1)
-
-	dropdown.bottomBorder = dropdown:CreateTexture(nil, "BORDER")
-	dropdown.bottomBorder:SetPoint("BOTTOMLEFT")
-	dropdown.bottomBorder:SetPoint("BOTTOMRIGHT")
-	dropdown.bottomBorder:SetHeight(1)
-	dropdown.bottomBorder:SetColorTexture(0.34, 0.34, 0.38, 1)
+	AddBackground(dropdown, material.panel, material.borderBright)
 
 	dropdown.buttons = {}
 	for index = 1, SOUND_ROWS_PER_PAGE do
@@ -914,7 +1010,7 @@ local function CreateUI()
 		return ui
 	end
 
-	local frame = CreateFrame("Frame", "GameSoundChangerOptionsFrame", UIParent, "BasicFrameTemplateWithInset")
+	local frame = CreateFrame("Frame", "GameSoundChangerOptionsFrame", UIParent)
 	frame:SetSize(920, 610)
 	frame:SetPoint("CENTER")
 	frame:SetMovable(true)
@@ -924,9 +1020,29 @@ local function CreateUI()
 	frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
 	frame:Hide()
 
+	AddBackground(frame, material.panel, material.borderBright)
+
+	frame.TitleBg = frame:CreateTexture(nil, "BORDER")
+	frame.TitleBg:SetPoint("TOPLEFT", 1, -1)
+	frame.TitleBg:SetPoint("TOPRIGHT", -1, -1)
+	frame.TitleBg:SetHeight(30)
+	SetVertexColor(frame.TitleBg, material.panelTop)
+
+	frame.inset = CreateFrame("Frame", nil, frame)
+	frame.inset:SetPoint("TOPLEFT", 10, -38)
+	frame.inset:SetPoint("BOTTOMRIGHT", -10, 10)
+	AddBackground(frame.inset, material.panelInset, { 0.075, 0.08, 0.09, 1 })
+
 	frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	frame.title:SetPoint("LEFT", frame.TitleBg, "LEFT", 5, 0)
+	frame.title:SetPoint("LEFT", frame.TitleBg, "LEFT", 10, 0)
+	frame.title:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
 	frame.title:SetText("GameSoundChanger")
+
+	frame.closeButton = CreateButton(frame, "X", 26)
+	frame.closeButton:SetPoint("TOPRIGHT", -5, -4)
+	frame.closeButton:SetScript("OnClick", function()
+		frame:Hide()
+	end)
 
 	ui = frame
 	ui.currentRuleType = "SPELL"
@@ -935,10 +1051,10 @@ local function CreateUI()
 	ui.currentSound = GetDefaultSound()
 	ui.soundDropdownPage = 1
 
-	ui.enabled = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+	ui.enabled = CreateCheckButton(frame, "Enabled")
 	ui.enabled:SetPoint("TOPLEFT", 16, -34)
-	ui.enabled.Text:SetText("Enabled")
 	ui.enabled:SetScript("OnClick", function(self)
+		self.mark:SetShown(self:GetChecked())
 		DB().enabled = self:GetChecked() and true or false
 		RefreshUI()
 		RefreshSettingsPanel()
@@ -1058,10 +1174,11 @@ local function CreateUI()
 		row.bg = row:CreateTexture(nil, "BACKGROUND")
 		row.bg:SetAllPoints()
 		if index % 2 == 0 then
-			row.bg:SetColorTexture(0.12, 0.12, 0.12, 0.35)
+			SetVertexColor(row.bg, material.rowEven)
 		else
-			row.bg:SetColorTexture(0.05, 0.05, 0.05, 0.25)
+			SetVertexColor(row.bg, material.rowOdd)
 		end
+		AddBorder(row, { 0.07, 0.075, 0.085, 0.95 })
 
 		row.kind = row:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 		row.kind:SetPoint("LEFT", 8, 0)
@@ -1170,10 +1287,10 @@ local function RegisterSettingsPanel()
 	description:SetJustifyH("LEFT")
 	description:SetText("Choose player spells or player buff activations, then play named alert sounds from LibSharedMedia or custom audio.")
 
-	panel.enabled = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
+	panel.enabled = CreateCheckButton(panel, "Enable custom sounds")
 	panel.enabled:SetPoint("TOPLEFT", description, "BOTTOMLEFT", 0, -18)
-	panel.enabled.Text:SetText("Enable custom sounds")
 	panel.enabled:SetScript("OnClick", function(self)
+		self.mark:SetShown(self:GetChecked())
 		DB().enabled = self:GetChecked() and true or false
 		RefreshUI()
 		RefreshSettingsPanel()
