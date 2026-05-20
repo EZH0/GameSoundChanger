@@ -10,7 +10,7 @@ local SOUND_ROWS_PER_PAGE = 10
 local PROFILE_EXPORT_VERSION = "GSC1"
 
 local CHANNELS = { "Master", "SFX", "Ambience", "Dialog", "Music" }
-local RULE_TYPES = { "SPELL", "AURA" }
+local RULE_TYPES = { "SPELL" }
 local SPELL_TRIGGERS = { "SUCCEEDED", "START", "CHANNEL_START", "ANY" }
 local AURA_TRIGGERS = { "APPLIED", "REFRESH", "ANY" }
 local EVENT_TO_TRIGGER = {
@@ -47,7 +47,7 @@ local ApplyMutedSoundFiles
 local localeText = {
 	en = {
 		addUpdate = "Add/Update",
-		alertListHint = "Alert list sounds come from LibSharedMedia. Custom files still go in Interface\\AddOns\\GameSoundChanger\\Sounds.",
+		alertListHint = "Alert list sounds come from LibSharedMedia. Custom files still go in Interface\\AddOns\\GameSoundChanger\\Sounds. Buff tracking is disabled for now.",
 		buff = "Buff",
 		channel = "Channel: %s",
 		close = "Close",
@@ -78,10 +78,10 @@ local localeText = {
 		rules = "Rules",
 		settingsChannel = "Sound channel: %s",
 		settingsCount = "Saved rules: %d",
-		settingsDescription = "Choose player spells or player buff activations, then play named alert sounds from LibSharedMedia or custom audio.",
+		settingsDescription = "Choose player spells, then play named alert sounds from LibSharedMedia or custom audio.",
 		settingsEnable = "Enable custom sounds",
 		settingsOpen = "Open Sound Editor",
-		settingsTip = "Tip: cast a spell or gain a buff, open the sound editor, press Use Last, then choose an alert sound.",
+		settingsTip = "Tip: cast a spell, open the sound editor, press Use Last, then choose an alert sound.",
 		soundEditor = "GameSoundChanger",
 		soundSource = "Source: Alert list",
 		spell = "Spell",
@@ -93,7 +93,7 @@ local localeText = {
 	},
 	ko = {
 		addUpdate = "추가/갱신",
-		alertListHint = "알림 사운드는 LibSharedMedia에서 가져옵니다. 커스텀 파일은 Interface\\AddOns\\GameSoundChanger\\Sounds에 넣어주세요.",
+		alertListHint = "알림 사운드는 LibSharedMedia에서 가져옵니다. 커스텀 파일은 Interface\\AddOns\\GameSoundChanger\\Sounds에 넣어주세요. 버프 추적은 현재 비활성화되어 있습니다.",
 		buff = "버프",
 		channel = "채널: %s",
 		close = "닫기",
@@ -124,10 +124,10 @@ local localeText = {
 		rules = "규칙",
 		settingsChannel = "사운드 채널: %s",
 		settingsCount = "저장된 규칙: %d",
-		settingsDescription = "플레이어 주문 또는 플레이어 버프 발동을 선택한 뒤 LibSharedMedia 알림음이나 커스텀 사운드를 재생합니다.",
+		settingsDescription = "플레이어 주문을 선택한 뒤 LibSharedMedia 알림음이나 커스텀 사운드를 재생합니다.",
 		settingsEnable = "커스텀 사운드 활성화",
 		settingsOpen = "사운드 편집기 열기",
-		settingsTip = "팁: 주문을 사용하거나 버프를 얻은 뒤 사운드 편집기에서 Use Last를 누르고 알림음을 선택하세요.",
+		settingsTip = "팁: 주문을 사용한 뒤 사운드 편집기에서 Use Last를 누르고 알림음을 선택하세요.",
 		soundEditor = "GameSoundChanger",
 		soundSource = "소스: 알림 목록",
 		spell = "주문",
@@ -589,7 +589,10 @@ local function DeserializeProfile(text)
 					profile.channel = parts[3] ~= "" and parts[3] or "Master"
 					profile.locale = (parts[4] == "ko") and "ko" or "en"
 				elseif parts[1] == "R" then
-					local ruleType = (parts[2] == "AURA" or parts[2] == "SPELL") and parts[2] or "SPELL"
+					local ruleType = "SPELL"
+					if parts[2] == "AURA" then
+						ruleType = nil
+					end
 					local id = tonumber(parts[3])
 					local trigger = parts[4] or "ANY"
 					local sound = TokensToSound(parts, 6)
@@ -783,8 +786,10 @@ end
 local function CountRules()
 	MigrateLegacyMappings()
 	local count = 0
-	for _ in pairs(DB().rules) do
-		count = count + 1
+	for _, rule in pairs(DB().rules) do
+		if rule and rule.type == "SPELL" then
+			count = count + 1
+		end
 	end
 	return count
 end
@@ -792,8 +797,10 @@ end
 local function SortedRuleKeys()
 	MigrateLegacyMappings()
 	local keys = {}
-	for key in pairs(DB().rules) do
-		keys[#keys + 1] = key
+	for key, rule in pairs(DB().rules) do
+		if rule and rule.type == "SPELL" then
+			keys[#keys + 1] = key
+		end
 	end
 
 	table.sort(keys, function(a, b)
@@ -820,8 +827,8 @@ local material = {
 	border = { 0.18, 0.19, 0.21, 1 },
 	borderBright = { 0.34, 0.36, 0.39, 1 },
 	accent = { 0.16, 0.68, 0.92, 1 },
-	text = { 0.86, 0.88, 0.9, 1 },
-	textDim = { 0.58, 0.61, 0.65, 1 },
+		text = { 1, 1, 1, 1 },
+		textDim = { 0.78, 0.8, 0.84, 1 },
 }
 
 local function SetVertexColor(texture, color)
@@ -872,6 +879,7 @@ end
 local function CreateLabel(parent, text, width)
 	local label = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 	label:SetJustifyH("LEFT")
+	label:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
 	label:SetText(text)
 	if width then
 		label:SetWidth(width)
@@ -952,8 +960,9 @@ local function CreateEditBox(parent, width)
 end
 
 local function CreateCheckButton(parent, text)
-	local check = CreateFrame("CheckButton", nil, parent)
+	local check = CreateFrame("Button", nil, parent)
 	check:SetSize(22, 22)
+	check.checked = false
 
 	AddBackground(check, material.panelInset, material.border)
 
@@ -968,10 +977,6 @@ local function CreateCheckButton(parent, text)
 	check.Text:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
 	check.Text:SetText(text or "")
 
-	check:SetScript("OnClick", function(self)
-		self.mark:SetShown(self:GetChecked())
-	end)
-
 	check:HookScript("OnEnter", function(self)
 		SetVertexColor(self.bg, material.controlHover)
 	end)
@@ -979,10 +984,26 @@ local function CreateCheckButton(parent, text)
 		SetVertexColor(self.bg, material.panelInset)
 	end)
 
-	local originalSetChecked = check.SetChecked
 	check.SetChecked = function(self, checked)
-		originalSetChecked(self, checked)
-		self.mark:SetShown(checked)
+		self.checked = checked and true or false
+		self.mark:SetShown(self.checked)
+	end
+	check.GetChecked = function(self)
+		return self.checked
+	end
+
+	local originalSetScript = check.SetScript
+	check.SetScript = function(self, scriptType, handler)
+		if scriptType == "OnClick" then
+			originalSetScript(self, scriptType, function(frame, ...)
+				frame:SetChecked(not frame:GetChecked())
+				if handler then
+					handler(frame, ...)
+				end
+			end)
+		else
+			originalSetScript(self, scriptType, handler)
+		end
 	end
 
 	return check
@@ -1180,12 +1201,6 @@ local function RefreshUI()
 		ui.lastSpellText:SetText(L("lastSpellNone"))
 	end
 
-	if lastAura.id then
-		ui.lastAuraText:SetText(L("lastBuff", (lastAura.name or "Unknown") .. " (" .. lastAura.id .. ") via " .. (lastAura.trigger or "?")))
-	else
-		ui.lastAuraText:SetText(L("lastBuffNone"))
-	end
-
 	local keys = SortedRuleKeys()
 	local totalPages = math.max(1, math.ceil(#keys / ROWS_PER_PAGE))
 	if page > totalPages then
@@ -1222,12 +1237,13 @@ end
 local function UpsertRule(ruleType, id, trigger, sound)
 	id = tonumber(id)
 	if not id then
-		Print("Enter a numeric spell or buff ID.")
+		Print("Enter a numeric spell ID.")
 		return false
 	end
 
 	if not Contains(RULE_TYPES, ruleType) then
-		ruleType = "SPELL"
+		Print("Buff tracking is disabled for now. Only spell rules can be added.")
+		return false
 	end
 
 	local triggerList = GetTriggerList(ruleType)
@@ -1293,18 +1309,10 @@ local function FillEditor(ruleType, id)
 end
 
 local function UseLastForCurrentType()
-	if ui.currentRuleType == "AURA" then
-		if lastAura.id then
-			FillEditor("AURA", lastAura.id)
-		else
-			Print("Gain a buff first, then press Use Last.")
-		end
+	if lastSpell.id then
+		FillEditor("SPELL", lastSpell.id)
 	else
-		if lastSpell.id then
-			FillEditor("SPELL", lastSpell.id)
-		else
-			Print("Cast a spell first, then press Use Last.")
-		end
+		Print("Cast a spell first, then press Use Last.")
 	end
 end
 
@@ -1612,7 +1620,7 @@ local function CreateUI()
 	end
 
 	local frame = CreateFrame("Frame", "GameSoundChangerOptionsFrame", UIParent)
-	frame:SetSize(920, 610)
+	frame:SetSize(1100, 640)
 	frame:SetPoint("CENTER")
 	frame:SetMovable(true)
 	frame:EnableMouse(true)
@@ -1682,15 +1690,13 @@ local function CreateUI()
 		RefreshSettingsPanel()
 	end)
 
-	ui.lastSpellText = CreateLabel(frame, "Last spell: none yet", 420)
+	ui.lastSpellText = CreateLabel(frame, "Last spell: none yet", 520)
 	ui.lastSpellText:SetPoint("TOPLEFT", 20, -70)
-	ui.lastAuraText = CreateLabel(frame, "Last buff: none yet", 420)
-	ui.lastAuraText:SetPoint("LEFT", ui.lastSpellText, "RIGHT", 20, 0)
 
 	ui.typeButton = CreateButton(frame, "Track: Spell", 126)
 	ui.typeButton:SetPoint("TOPLEFT", 20, -106)
 	ui.typeButton:SetScript("OnClick", function()
-		ui.currentRuleType = NextValue(RULE_TYPES, ui.currentRuleType or "SPELL")
+		ui.currentRuleType = "SPELL"
 		ui.currentTrigger = GetTriggerList(ui.currentRuleType)[1]
 		UpdateRuleButtons()
 	end)
@@ -1733,11 +1739,11 @@ local function CreateUI()
 		RefreshSoundDropdown()
 	end)
 
-	ui.soundPickerButton = CreateDropdownControl(frame, 360)
+	ui.soundPickerButton = CreateDropdownControl(frame, 430)
 	ui.soundPickerButton:SetPoint("LEFT", ui.soundSearchBox, "RIGHT", 10, 0)
 	ui.soundPickerButton:SetScript("OnClick", ToggleSoundDropdown)
 
-	ui.customSoundBox = CreateEditBox(frame, 590)
+	ui.customSoundBox = CreateEditBox(frame, 760)
 	ui.customSoundBox:SetPoint("LEFT", ui.soundModeButton, "RIGHT", 12, 0)
 	ui.customSoundBox:Hide()
 
@@ -1755,7 +1761,7 @@ local function CreateUI()
 
 	ui.hint = frame:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
 	ui.hint:SetPoint("TOPLEFT", 184, -166)
-	ui.hint:SetWidth(690)
+	ui.hint:SetWidth(860)
 	ui.hint:SetJustifyH("LEFT")
 	ui.hint:SetText(L("alertListHint"))
 
@@ -1781,7 +1787,7 @@ local function CreateUI()
 
 	for index = 1, ROWS_PER_PAGE do
 		local row = CreateFrame("Frame", nil, frame)
-		row:SetSize(880, 32)
+		row:SetSize(1060, 32)
 		row:SetPoint("TOPLEFT", 20, -230 - ((index - 1) * 34))
 
 		row.bg = row:CreateTexture(nil, "BACKGROUND")
@@ -1797,34 +1803,38 @@ local function CreateUI()
 		row.kind:SetPoint("LEFT", 8, 0)
 		row.kind:SetWidth(56)
 		row.kind:SetJustifyH("LEFT")
+		row.kind:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
 
 		row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 		row.name:SetPoint("LEFT", row.kind, "RIGHT", 8, 0)
-		row.name:SetWidth(215)
+		row.name:SetWidth(270)
 		row.name:SetJustifyH("LEFT")
+		row.name:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
 
 		row.triggerText = row:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 		row.triggerText:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
-		row.triggerText:SetWidth(96)
+		row.triggerText:SetWidth(110)
 		row.triggerText:SetJustifyH("LEFT")
+		row.triggerText:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
 
-		row.soundText = row:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+		row.soundText = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 		row.soundText:SetPoint("LEFT", row.triggerText, "RIGHT", 8, 0)
-		row.soundText:SetWidth(330)
+		row.soundText:SetWidth(420)
 		row.soundText:SetJustifyH("LEFT")
+		row.soundText:SetTextColor(material.text[1], material.text[2], material.text[3], material.text[4])
 		if row.soundText.SetWordWrap then
 			row.soundText:SetWordWrap(false)
 		end
 
-		row.preview = CreateButton(row, "Play", 52)
-		row.preview:SetPoint("RIGHT", row, "RIGHT", -130, 0)
+		row.preview = CreateButton(row, "Play", 58)
+		row.preview:SetPoint("RIGHT", row, "RIGHT", -150, 0)
 		row.preview:SetScript("OnClick", function(self)
 			if self:GetParent().sound then
 				PlaySelectedSound(self:GetParent().sound)
 			end
 		end)
 
-		row.edit = CreateButton(row, "Edit", 52)
+		row.edit = CreateButton(row, "Edit", 58)
 		row.edit:SetPoint("LEFT", row.preview, "RIGHT", 6, 0)
 		row.edit:SetScript("OnClick", function(self)
 			local rule = DB().rules[self:GetParent().ruleKey]
@@ -1833,7 +1843,7 @@ local function CreateUI()
 			end
 		end)
 
-		row.remove = CreateButton(row, "Del", 52)
+		row.remove = CreateButton(row, "Del", 58)
 		row.remove:SetPoint("LEFT", row.edit, "RIGHT", 6, 0)
 		row.remove:SetScript("OnClick", function(self)
 			RemoveRule(self:GetParent().ruleKey)
@@ -1915,7 +1925,7 @@ local function RegisterSettingsPanel()
 	description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -12)
 	description:SetWidth(620)
 	description:SetJustifyH("LEFT")
-	description:SetText("Choose player spells or player buff activations, then play named alert sounds from LibSharedMedia or custom audio.")
+	description:SetText("Choose player spells, then play named alert sounds from LibSharedMedia or custom audio.")
 	panel.description = description
 
 	panel.enabled = CreateCheckButton(panel, "Enable custom sounds")
@@ -1961,7 +1971,7 @@ local function RegisterSettingsPanel()
 	note:SetPoint("TOPLEFT", panel.lastAura, "BOTTOMLEFT", 0, -18)
 	note:SetWidth(620)
 	note:SetJustifyH("LEFT")
-	note:SetText("Tip: cast a spell or gain a buff, open the sound editor, press Use Last, then choose an alert sound.")
+	note:SetText("Tip: cast a spell, open the sound editor, press Use Last, then choose an alert sound.")
 	panel.note = note
 
 	panel:SetScript("OnShow", RefreshSettingsPanel)
@@ -1979,13 +1989,11 @@ local function ShowHelp()
 	Print("/gsc menu - open the WoW AddOns settings page")
 	Print("/gsc on | off - enable or disable custom sounds")
 	Print("/gsc add <spellID> <soundFile> - legacy custom-file spell rule")
-	Print("/gsc addbuff <buffID> <soundFile> - legacy custom-file buff rule")
 	Print("/gsc addlast <soundFile> - map the last detected player spell")
-	Print("/gsc addlastbuff <soundFile> - map the last detected player buff")
-	Print("/gsc remove SPELL:<id> | AURA:<id> - remove a rule")
+	Print("/gsc remove SPELL:<id> - remove a rule")
 	Print("/gsc mute <fileID> - mute a Blizzard sound file ID")
 	Print("/gsc unmute <fileID> - unmute a Blizzard sound file ID")
-	Print("/gsc last - show the last detected spell and buff")
+	Print("/gsc last - show the last detected spell")
 end
 
 local function HandleSlash(message)
@@ -2021,17 +2029,11 @@ local function HandleSlash(message)
 		else
 			Print("Last spell: none yet.")
 		end
-		if lastAura.id then
-			Print("Last buff: " .. (lastAura.name or "Unknown") .. " (" .. lastAura.id .. ") via " .. (lastAura.trigger or "?"))
-		else
-			Print("Last buff: none yet.")
-		end
 	elseif command == "add" then
 		local spellID, path = rest:match("^(%d+)%s+(.+)$")
 		UpsertRule("SPELL", spellID, "SUCCEEDED", { type = "file", path = path })
 	elseif command == "addbuff" then
-		local auraID, path = rest:match("^(%d+)%s+(.+)$")
-		UpsertRule("AURA", auraID, "APPLIED", { type = "file", path = path })
+		Print("Buff tracking is disabled for now. Use /gsc add <spellID> <soundFile> for spell rules.")
 	elseif command == "addlast" then
 		if lastSpell.id then
 			UpsertRule("SPELL", lastSpell.id, lastSpell.trigger or "SUCCEEDED", { type = "file", path = rest })
@@ -2039,11 +2041,7 @@ local function HandleSlash(message)
 			Print("No player spell detected yet.")
 		end
 	elseif command == "addlastbuff" then
-		if lastAura.id then
-			UpsertRule("AURA", lastAura.id, lastAura.trigger or "APPLIED", { type = "file", path = rest })
-		else
-			Print("No player buff detected yet.")
-		end
+		Print("Buff tracking is disabled for now. Use /gsc addlast <soundFile> for the last detected spell.")
 	elseif command == "remove" or command == "delete" or command == "del" then
 		if string.find(rest, ":", 1, true) then
 			RemoveRule(string.upper(rest))
@@ -2283,8 +2281,6 @@ addon:SetScript("OnEvent", function(self, event, ...)
 		Print("Type /gsc to open the sound editor, or /gsc menu for AddOns settings.")
 	elseif EVENT_TO_TRIGGER[event] then
 		HandleSpellEvent(event, ...)
-	elseif event == "UNIT_AURA" then
-		HandleUnitAura(...)
 	end
 end)
 
@@ -2293,7 +2289,6 @@ addon:RegisterEvent("PLAYER_LOGIN")
 addon:RegisterEvent("UNIT_SPELLCAST_START")
 addon:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 addon:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
-addon:RegisterUnitEvent("UNIT_AURA", "player")
 
 SLASH_GAMESOUNDCHANGER1 = "/gsc"
 SLASH_GAMESOUNDCHANGER2 = "/gamesoundchanger"
